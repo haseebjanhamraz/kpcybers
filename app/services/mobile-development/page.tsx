@@ -1,7 +1,7 @@
 import Header from '@/components/header';
 import Footer from '@/components/footer';
 import FloatingContact from '@/components/floating-contact';
-import ServiceHero from '@/components/service-hero';
+import MobileServiceHero from '@/components/mobile-service-hero';
 import ServiceProcess from '@/components/service-process';
 import ServicePricing from '@/components/service-pricing';
 import ServiceCaseStudies from '@/components/service-case-studies';
@@ -120,7 +120,7 @@ export default function MobileDevelopmentPage() {
   return (
     <main className="min-h-screen">
       <Header />
-      <ServiceHero />
+      <MobileServiceHero />
       <ServiceProcess steps={processSteps} />
       <ServiceCaseStudies caseStudies={caseStudies} />
       <ServicePricing plans={pricingPlans} />
