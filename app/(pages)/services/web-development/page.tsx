@@ -3,8 +3,8 @@ import Footer from '@/components/footer';
 import FloatingContact from '@/components/floating-contact';
 import ServiceHero from '@/components/service-hero';
 import ServiceProcess from '@/components/service-process';
-import ServicePricing from '@/components/service-pricing';
 import ServiceCaseStudies from '@/components/service-case-studies';
+import ServicePricing from '@/components/service-pricing';
 
 const processSteps = [
   {
@@ -58,7 +58,7 @@ const pricingPlans = [
       '3 months support',
       'Free hosting for 1 year'
     ],
-    popular: false
+    is_featured: false
   },
   {
     name: 'Professional',
@@ -74,7 +74,7 @@ const pricingPlans = [
       'Free hosting for 1 year',
       'Social media integration'
     ],
-    popular: true
+    is_featured: true
   },
   {
     name: 'Enterprise',
@@ -90,7 +90,7 @@ const pricingPlans = [
       'Dedicated server',
       'Priority support'
     ],
-    popular: false
+    is_featured: false
   }
 ];
 
@@ -120,7 +120,10 @@ export default function WebDevelopmentPage() {
       <ServiceHero />
       <ServiceProcess steps={processSteps} />
       <ServiceCaseStudies caseStudies={caseStudies} />
-      <ServicePricing plans={pricingPlans} />
+      <ServicePricing plans={pricingPlans.map(plan => ({
+        ...plan,
+        is_featured: plan.is_featured || false
+      }))} />
       <FloatingContact />
       <Footer />
     </main>
