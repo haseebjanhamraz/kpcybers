@@ -1,10 +1,10 @@
 import Header from '@/components/header';
-import Footer from '@/components/footer';
-import FloatingContact from '@/components/floating-contact';
 import ServiceHero from '@/components/service-hero';
 import ServiceProcess from '@/components/service-process';
 import ServiceCaseStudies from '@/components/service-case-studies';
 import ServicePricing from '@/components/service-pricing';
+import { useServices } from '@/hooks/useServices';
+
 
 const processSteps = [
   {
@@ -44,6 +44,8 @@ const processSteps = [
     duration: 'Ongoing'
   }
 ];
+
+
 
 const pricingPlans = [
   {
@@ -90,7 +92,7 @@ const pricingPlans = [
       'Dedicated server',
       'Priority support'
     ],
-    is_featured: false
+    is_featured: true
   }
 ];
 
@@ -114,6 +116,8 @@ const caseStudies = [
 ];
 
 export default function WebDevelopmentPage() {
+  const plans = useServices();
+  console.log(plans);
   return (
     <main className="min-h-screen">
       <Header />
@@ -122,10 +126,8 @@ export default function WebDevelopmentPage() {
       <ServiceCaseStudies caseStudies={caseStudies} />
       <ServicePricing plans={pricingPlans.map(plan => ({
         ...plan,
-        is_featured: plan.is_featured || false
+        isfeatured: plan.is_featured || false
       }))} />
-      <FloatingContact />
-      <Footer />
     </main>
   );
 }

@@ -1,4 +1,4 @@
-import pool from '@/app/utils/pg';
+import pool from '@/lib/pg';
 import { NextResponse } from 'next/server';
 
 export const dynamic = 'force-dynamic';

@@ -5,13 +5,15 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Badge } from '@/components/ui/badge';
 import { CheckCircle, Star, ArrowRight } from 'lucide-react';
 import Link from 'next/link';
+import { useEffect, useState } from 'react';
+import { useServices } from '@/hooks/useServices';
 
 interface PricingPlan {
   name: string;
   price: string;
   description: string;
   features: string[];
-  popular: boolean;
+  isfeatured: boolean;
 }
 
 interface ServicePricingProps {
@@ -24,7 +26,33 @@ const getPackageKey = (planName: string, category: string) => {
   return `${cat}-${name}`;
 };
 
-export default function ServicePricing({ plans }: ServicePricingProps) {
+export default function ServicePricing({ plans: initialPlans }: ServicePricingProps) {
+  const [plans, setPlans] = useState<PricingPlan[]>(initialPlans);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const fetchPlans = async () => {
+      try {
+        const result = await useServices();
+        if (Array.isArray(result)) {
+          setLoading(false);
+          return;
+        }
+        const { plans: fetchedPlans } = result as { plans: PricingPlan[] };
+        if (fetchedPlans && fetchedPlans.length > 0) {
+          setPlans(fetchedPlans); // Assuming first service's plans
+        }
+        setLoading(false);
+      } catch (err) {
+        setError('Failed to load pricing plans');
+        setLoading(false);
+      }
+    };
+
+    fetchPlans();
+  }, []);
+
   // Determine the service category based on the current URL or context
   const getServiceCategory = () => {
     if (typeof window !== 'undefined') {
@@ -38,6 +66,26 @@ export default function ServicePricing({ plans }: ServicePricingProps) {
     return 'web'; // default
   };
 
+  if (loading) {
+    return (
+      <section className="py-20 bg-background">
+        <div className="container mx-auto px-4 text-center">
+          Loading pricing plans...
+        </div>
+      </section>
+    );
+  }
+
+  if (error) {
+    return (
+      <section className="py-20 bg-background">
+        <div className="container mx-auto px-4 text-center text-red-500">
+          {error}
+        </div>
+      </section>
+    );
+  }
+
   return (
     <section className="py-20 bg-background">
       <div className="container mx-auto px-4 sm:px-6 lg:px-8">
@@ -48,7 +96,7 @@ export default function ServicePricing({ plans }: ServicePricingProps) {
               Transparent <span className="bg-gradient-to-r from-blue-600 to-emerald-500 bg-clip-text text-transparent">Pricing</span>
             </h2>
             <p className="text-lg text-muted-foreground leading-relaxed max-w-3xl mx-auto">
-              Choose the perfect plan for your project. All packages include our standard features 
+              Choose the perfect plan for your project. All packages include our standard features
               and quality guarantee. Need something custom? Let's talk!
             </p>
           </div>
@@ -57,18 +105,17 @@ export default function ServicePricing({ plans }: ServicePricingProps) {
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8 mb-12">
             {plans.map((plan, index) => {
               const packageKey = getPackageKey(plan.name, getServiceCategory());
-              
+
               return (
-                <Card 
+                <Card
                   key={plan.name}
-                  className={`relative overflow-hidden transition-all duration-300 hover:shadow-2xl hover:scale-105 ${
-                    plan.popular 
-                      ? 'border-2 border-blue-600 shadow-xl scale-105' 
-                      : 'border-2 hover:border-blue-200 dark:hover:border-blue-800'
-                  }`}
+                  className={`relative overflow-hidden transition-all duration-300 hover:shadow-2xl hover:scale-105 ${plan.isfeatured
+                    ? 'border-2 border-blue-600 shadow-xl scale-105'
+                    : 'border-2 hover:border-blue-200 dark:hover:border-blue-800'
+                    }`}
                 >
                   {/* Popular Badge */}
-                  {plan.popular && (
+                  {plan.isfeatured && (
                     <div className="absolute top-0 left-0 right-0 bg-gradient-to-r from-blue-600 to-emerald-500 text-white text-center py-2">
                       <div className="flex items-center justify-center space-x-1">
                         <Star className="h-4 w-4 fill-current" />
@@ -78,7 +125,7 @@ export default function ServicePricing({ plans }: ServicePricingProps) {
                     </div>
                   )}
 
-                  <CardHeader className={`text-center ${plan.popular ? 'pt-12' : 'pt-6'}`}>
+                  <CardHeader className={`text-center ${plan.isfeatured ? 'pt-12' : 'pt-6'}`}>
                     <CardTitle className="text-2xl font-bold mb-2">{plan.name}</CardTitle>
                     <div className="mb-4">
                       <span className="text-4xl font-bold bg-gradient-to-r from-blue-600 to-emerald-500 bg-clip-text text-transparent">
@@ -103,13 +150,12 @@ export default function ServicePricing({ plans }: ServicePricingProps) {
                     </div>
 
                     {/* CTA Button */}
-                    <Button 
+                    <Button
                       asChild
-                      className={`w-full ${
-                        plan.popular 
-                          ? 'bg-gradient-to-r from-blue-600 to-emerald-500 hover:from-blue-700 hover:to-emerald-600' 
-                          : 'bg-gradient-to-r from-gray-600 to-gray-700 hover:from-gray-700 hover:to-gray-800'
-                      }`}
+                      className={`w-full ${plan.isfeatured
+                        ? 'bg-gradient-to-r from-blue-600 to-emerald-500 hover:from-blue-700 hover:to-emerald-600'
+                        : 'bg-gradient-to-r from-gray-600 to-gray-700 hover:from-gray-700 hover:to-gray-800'
+                        }`}
                     >
                       <Link href={plan.price === 'Custom Quote' ? '/contact' : `/checkout?package=${packageKey}`}>
                         {plan.price === 'Custom Quote' ? 'Get Quote' : 'Get Started'}
@@ -126,12 +172,12 @@ export default function ServicePricing({ plans }: ServicePricingProps) {
           <div className="bg-muted/50 rounded-2xl p-8 text-center">
             <h3 className="text-2xl font-bold mb-4">Need a Custom Solution?</h3>
             <p className="text-muted-foreground mb-6 max-w-2xl mx-auto">
-              Every business is unique. If our standard packages don't fit your specific needs, 
+              Every business is unique. If our standard packages don't fit your specific needs,
               we'd love to create a custom solution tailored just for you.
             </p>
             <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
-              <Button 
-                asChild 
+              <Button
+                asChild
                 variant="outline"
                 size="lg"
                 className="border-2 hover:bg-accent"
@@ -140,7 +186,7 @@ export default function ServicePricing({ plans }: ServicePricingProps) {
                   Schedule Consultation
                 </Link>
               </Button>
-              <Button 
+              <Button
                 asChild
                 size="lg"
                 className="bg-gradient-to-r from-blue-600 to-emerald-500 hover:from-blue-700 hover:to-emerald-600"

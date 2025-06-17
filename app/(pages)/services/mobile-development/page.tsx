@@ -76,7 +76,7 @@ const pricingPlans = [
       'App store optimization',
       'Analytics integration'
     ],
-    popular: true
+    is_featured: true
   },
   {
     name: 'Enterprise App',
@@ -93,7 +93,7 @@ const pricingPlans = [
       'Dedicated project manager',
       'Priority support'
     ],
-    popular: false
+    is_featured: false
   }
 ];
 
@@ -125,7 +125,7 @@ export default function MobileDevelopmentPage() {
       <ServiceCaseStudies caseStudies={caseStudies} />
       <ServicePricing plans={pricingPlans.map(plan => ({
         ...plan,
-        is_featured: plan.popular || false
+        isfeatured: plan.is_featured || false
       }))} />
       <FloatingContact />
       <Footer />
