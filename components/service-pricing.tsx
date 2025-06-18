@@ -35,6 +35,7 @@ export default function ServicePricing({ plans: initialPlans }: ServicePricingPr
     const fetchPlans = async () => {
       try {
         const result = await useServices();
+        console.log(result);
         if (Array.isArray(result)) {
           setLoading(false);
           return;

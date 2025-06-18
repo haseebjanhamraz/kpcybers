@@ -5,6 +5,7 @@ import DigitalMarketingServiceHero from '@/components/digital-marketing-service-
 import ServiceProcess from '@/components/service-process';
 import ServicePricing from '@/components/service-pricing';
 import ServiceCaseStudies from '@/components/service-case-studies';
+import { useServices } from '@/hooks/useServices';
 
 const processSteps = [
   {
@@ -114,13 +115,18 @@ const caseStudies = [
 ];
 
 export default function WebDevelopmentPage() {
+  const services = useServices();
+  console.log(services);
   return (
     <main className="min-h-screen">
       <Header />
       <DigitalMarketingServiceHero />
       <ServiceProcess steps={processSteps} />
       <ServiceCaseStudies caseStudies={caseStudies} />
-      <ServicePricing plans={pricingPlans} />
+      <ServicePricing plans={pricingPlans.map(plan => ({
+        ...plan,
+        isfeatured: plan.is_featured
+      }))} />
       <FloatingContact />
       <Footer />
     </main>

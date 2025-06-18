@@ -7,12 +7,11 @@ import { Button } from '@/components/ui/button';
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from '@/components/ui/sheet';
 import { Menu, Moon, Sun, Code, Smartphone, Globe, Network, Settings } from 'lucide-react';
 import Image from 'next/image';
-
 const services = [
   { name: 'Web Development', href: '/services/web-development', icon: Code },
-  { name: 'Mobile App Development', href: '/services/mobile-development', icon: Smartphone },
+  { name: 'Mobile App Development', href: '/services/mobile-app-development', icon: Smartphone },
   { name: 'Digital Marketing', href: '/services/digital-marketing', icon: Globe },
-  { name: 'Networking Solutions', href: '/services/networking', icon: Network },
+  { name: 'Networking Solutions', href: '/services/networking-solutions', icon: Network },
   { name: 'CMS Development', href: '/services/cms-development', icon: Settings },
 ];
 
@@ -20,7 +19,6 @@ export default function Header() {
   const [isScrolled, setIsScrolled] = useState(false);
   const { theme, setTheme } = useTheme();
   const [mounted, setMounted] = useState(false);
-
   useEffect(() => {
     setMounted(true);
     const handleScroll = () => {
