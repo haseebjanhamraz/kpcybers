@@ -1,4 +1,4 @@
-import pool from '@/lib/pg';
+import db from '@/lib/db';
 import { NextResponse } from 'next/server';
 
 export const dynamic = 'force-dynamic';
@@ -22,55 +22,52 @@ interface ServiceData {
 // GET all services with their features and plans
 export async function GET(request: Request) {
     try {
-        const client = await pool.connect();
+        // Get all services
+        const services = db.prepare(`
+            SELECT * FROM services ORDER BY created_at DESC
+        `).all();
 
-        const result = await client.query(`
-            WITH service_features AS (
-                SELECT 
-                    service_id,
-                    json_agg(json_build_object(
-                        'id', id,
-                        'name', feature_name,
-                        'created_at', created_at,
-                        'updated_at', updated_at
-                    )) as features
-                FROM features
-                GROUP BY service_id
-            ),
-            service_plans AS (
-                SELECT 
-                    sp.service_id,
-                    json_agg(json_build_object(
-                        'id', sp.id,
-                        'name', sp.plan_name,
-                        'description', sp.plan_description,
-                        'price', sp.plan_price,
-                        'features', (
-                            SELECT json_agg(f.feature_name)
-                            FROM service_plan_features spf
-                            JOIN features f ON f.id = spf.feature_id
-                            WHERE spf.service_plan_id = sp.id
-                            GROUP BY spf.service_plan_id
-                        ),
-                        'created_at', sp.created_at,
-                        'updated_at', sp.updated_at
-                    )) as plans
-                FROM service_plans sp
-                GROUP BY sp.service_id
-            )
-            SELECT 
-                s.*,
-                COALESCE(sf.features, '[]'::json) as features,
-                COALESCE(sp.plans, '[]'::json) as plans
-            FROM services s
-            LEFT JOIN service_features sf ON sf.service_id = s.id
-            LEFT JOIN service_plans sp ON sp.service_id = s.id
-            ORDER BY s.created_at DESC
+        // Get features for each service
+        const getFeatures = db.prepare(`
+            SELECT id, feature_name as name, created_at, updated_at
+            FROM features 
+            WHERE service_id = ?
         `);
 
-        client.release();
+        // Get plans for each service
+        const getPlans = db.prepare(`
+            SELECT id, plan_name as name, plan_description as description, 
+                   plan_price as price, created_at, updated_at
+            FROM service_plans 
+            WHERE service_id = ?
+        `);
 
-        return NextResponse.json(result.rows, { status: 200 });
+        // Get plan features
+        const getPlanFeatures = db.prepare(`
+            SELECT f.feature_name
+            FROM service_plan_features spf
+            JOIN features f ON f.id = spf.feature_id
+            WHERE spf.service_plan_id = ?
+        `);
+
+        const servicesWithData = services.map((service: any) => {
+            const features = getFeatures.all(service.id);
+            const plans = getPlans.all(service.id).map((plan: any) => {
+                const planFeatures = getPlanFeatures.all(plan.id).map((f: any) => f.feature_name);
+                return {
+                    ...plan,
+                    features: planFeatures
+                };
+            });
+
+            return {
+                ...service,
+                features,
+                plans
+            };
+        });
+
+        return NextResponse.json(servicesWithData, { status: 200 });
     } catch (error) {
         console.error('Error fetching services:', error);
         return NextResponse.json(
@@ -91,113 +88,107 @@ export async function POST(request: Request) {
         );
     }
 
-    const client = await pool.connect();
     try {
-        await client.query('BEGIN');
+        const transaction = db.transaction(() => {
+            // 1. Insert Service
+            const insertService = db.prepare(`
+                INSERT INTO services (name, description, price)
+                VALUES (?, ?, ?)
+            `);
+            const serviceResult = insertService.run(name, description, price);
+            const serviceId = serviceResult.lastInsertRowid;
 
-        // 1. Insert Service
-        const serviceResult = await client.query(
-            `INSERT INTO services (name, description, price)
-             VALUES ($1, $2, $3)
-             RETURNING id`,
-            [name, description, price]
-        );
-        const serviceId = serviceResult.rows[0].id;
+            // 2. Insert Features
+            const featureIds: number[] = [];
+            const insertFeature = db.prepare(`
+                INSERT INTO features (service_id, feature_name)
+                VALUES (?, ?)
+            `);
+            
+            for (const feature of features) {
+                // Check for duplicate feature names
+                const existingFeature = db.prepare(`
+                    SELECT 1 FROM features 
+                    WHERE service_id = ? AND feature_name = ?
+                `).get(serviceId, feature.name);
 
-        // 2. Insert Features
-        const featureIds: number[] = [];
-        for (const feature of features) {
-            // Check for duplicate feature names
-            const exists = await client.query(
-                `SELECT 1 FROM features 
-                 WHERE service_id = $1 AND feature_name = $2`,
-                [serviceId, feature.name]
-            );
+                if (existingFeature) {
+                    throw new Error(`Feature '${feature.name}' already exists for this service`);
+                }
 
-            if (exists.rows.length > 0) {
-                await client.query('ROLLBACK');
-                return NextResponse.json(
-                    { error: `Feature '${feature.name}' already exists for this service` },
-                    { status: 409 }
-                );
+                const featureResult = insertFeature.run(serviceId, feature.name);
+                featureIds.push(featureResult.lastInsertRowid as number);
             }
 
-            const featureResult = await client.query(
-                `INSERT INTO features (service_id, feature_name)
-                 VALUES ($1, $2)
-                 RETURNING id`,
-                [serviceId, feature.name]
-            );
-            featureIds.push(featureResult.rows[0].id);
-        }
+            // 3. Insert Plans and their features
+            const planIds: number[] = [];
+            const insertPlan = db.prepare(`
+                INSERT INTO service_plans (service_id, plan_name, plan_description, plan_price)
+                VALUES (?, ?, ?, ?)
+            `);
+            const insertPlanFeature = db.prepare(`
+                INSERT INTO service_plan_features (service_plan_id, feature_id)
+                VALUES (?, ?)
+            `);
 
-        // 3. Insert Plans and their features
-        const planIds: number[] = [];
-        for (const plan of plans) {
-            // Check for duplicate plan names
-            const exists = await client.query(
-                `SELECT 1 FROM service_plans 
-                 WHERE service_id = $1 AND plan_name = $2`,
-                [serviceId, plan.name]
-            );
+            for (const plan of plans) {
+                // Check for duplicate plan names
+                const existingPlan = db.prepare(`
+                    SELECT 1 FROM service_plans 
+                    WHERE service_id = ? AND plan_name = ?
+                `).get(serviceId, plan.name);
 
-            if (exists.rows.length > 0) {
-                await client.query('ROLLBACK');
-                return NextResponse.json(
-                    { error: `Plan '${plan.name}' already exists for this service` },
-                    { status: 409 }
-                );
-            }
+                if (existingPlan) {
+                    throw new Error(`Plan '${plan.name}' already exists for this service`);
+                }
 
-            const planResult = await client.query(
-                `INSERT INTO service_plans (service_id, plan_name, plan_description, plan_price)
-                 VALUES ($1, $2, $3, $4)
-                 RETURNING id`,
-                [serviceId, plan.name, plan.description, plan.price]
-            );
-            const planId = planResult.rows[0].id;
-            planIds.push(planId);
+                const planResult = insertPlan.run(serviceId, plan.name, plan.description, plan.price);
+                const planId = planResult.lastInsertRowid as number;
+                planIds.push(planId);
 
-            // Associate features with this plan
-            if (plan.features && plan.features.length > 0) {
-                for (const featureIndex of plan.features) {
-                    if (featureIndex >= 0 && featureIndex < featureIds.length) {
-                        await client.query(
-                            `INSERT INTO service_plan_features (service_plan_id, feature_id)
-                             VALUES ($1, $2)`,
-                            [planId, featureIds[featureIndex]]
-                        );
+                // Associate features with this plan
+                if (plan.features && plan.features.length > 0) {
+                    for (const featureIndex of plan.features) {
+                        if (featureIndex >= 0 && featureIndex < featureIds.length) {
+                            insertPlanFeature.run(planId, featureIds[featureIndex]);
+                        }
                     }
                 }
             }
-        }
 
-        await client.query('COMMIT');
+            return { serviceId, featureIds, planIds };
+        });
+
+        const result = transaction();
 
         // Return the complete service data
-        const newService = await client.query(
-            `SELECT * FROM services WHERE id = $1`,
-            [serviceId]
-        );
+        const newService = db.prepare(`
+            SELECT * FROM services WHERE id = ?
+        `).get(result.serviceId);
 
         return NextResponse.json(
             {
                 message: 'Service created successfully',
-                service: newService.rows[0],
-                featureIds,
-                planIds
+                service: newService,
+                featureIds: result.featureIds,
+                planIds: result.planIds
             },
             { status: 201 }
         );
     } catch (error) {
-        await client.query('ROLLBACK');
         console.error('Error creating service:', error);
+        
+        if (error instanceof Error && error.message.includes('already exists')) {
+            return NextResponse.json(
+                { error: error.message },
+                { status: 409 }
+            );
+        }
+
         return NextResponse.json(
             { error: 'Failed to create service' },
             { status: 500 }
         );
-    } finally {
-        client.release();
     }
 }
 
@@ -212,77 +203,66 @@ export async function PUT(request: Request) {
         );
     }
 
-    const client = await pool.connect();
     try {
-        await client.query('BEGIN');
+        const transaction = db.transaction(() => {
+            // 1. Verify service exists
+            const serviceExists = db.prepare(`
+                SELECT 1 FROM services WHERE id = ?
+            `).get(id);
+            
+            if (!serviceExists) {
+                throw new Error('Service not found');
+            }
 
-        // 1. Verify service exists
-        const serviceExists = await client.query(
-            `SELECT 1 FROM services WHERE id = $1`,
-            [id]
+            // 2. Update Service
+            const updateService = db.prepare(`
+                UPDATE services 
+                SET name = ?, description = ?, price = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+            `);
+            updateService.run(name, description, price, id);
+
+            // 3. Handle Features (simplified approach - you might want more sophisticated handling)
+            for (const feature of features) {
+                if ('id' in feature) {
+                    // Update existing feature
+                    const updateFeature = db.prepare(`
+                        UPDATE features 
+                        SET feature_name = ?, updated_at = CURRENT_TIMESTAMP
+                        WHERE id = ? AND service_id = ?
+                    `);
+                    updateFeature.run(feature.name, (feature as any).id, id);
+                } else {
+                    // Add new feature
+                    const insertFeature = db.prepare(`
+                        INSERT INTO features (service_id, feature_name)
+                        VALUES (?, ?)
+                    `);
+                    insertFeature.run(id, feature.name);
+                }
+            }
+        });
+
+        transaction();
+        
+        return NextResponse.json(
+            { message: 'Service updated successfully' },
+            { status: 200 }
         );
-        if (serviceExists.rows.length === 0) {
-            await client.query('ROLLBACK');
+    } catch (error) {
+        console.error('Error updating service:', error);
+        
+        if (error instanceof Error && error.message === 'Service not found') {
             return NextResponse.json(
                 { error: 'Service not found' },
                 { status: 404 }
             );
         }
 
-        // 2. Update Service
-        await client.query(
-            `UPDATE services 
-             SET name = $1, description = $2, price = $3
-             WHERE id = $4`,
-            [name, description, price, id]
-        );
-
-        // 3. Handle Features
-        const currentFeatures = await client.query(
-            `SELECT id, feature_name FROM features WHERE service_id = $1`,
-            [id]
-        );
-
-        // Process feature updates (simplified - in production you might want more sophisticated diffing)
-        const featureUpdates = [];
-        for (const feature of features) {
-            if ('id' in feature) {
-                // Update existing feature
-                await client.query(
-                    `UPDATE features 
-                     SET feature_name = $1
-                     WHERE id = $2 AND service_id = $3`,
-                    [feature.name, feature.id, id]
-                );
-            } else {
-                // Add new feature
-                const newFeature = await client.query(
-                    `INSERT INTO features (service_id, feature_name)
-                     VALUES ($1, $2)
-                     RETURNING id`,
-                    [id, feature.name]
-                );
-                featureUpdates.push(newFeature.rows[0].id);
-            }
-        }
-
-        // 4. Handle Plans (similar approach as features)
-        // ... implementation would follow similar pattern ...
-
-        await client.query('COMMIT');
-        return NextResponse.json(
-            { message: 'Service updated successfully' },
-            { status: 200 }
-        );
-    } catch (error) {
-        await client.query('ROLLBACK');
-        console.error('Error updating service:', error);
         return NextResponse.json(
             { error: 'Failed to update service' },
             { status: 500 }
         );
-    } finally {
-        client.release();
     }
 }
 
@@ -298,68 +278,43 @@ export async function DELETE(request: Request) {
         );
     }
 
-    const client = await pool.connect();
     try {
-        await client.query('BEGIN');
+        const transaction = db.transaction(() => {
+            // 1. Verify service exists
+            const serviceExists = db.prepare(`
+                SELECT 1 FROM services WHERE id = ?
+            `).get(id);
+            
+            if (!serviceExists) {
+                throw new Error('Service not found');
+            }
 
-        // 1. Verify service exists
-        const serviceExists = await client.query(
-            `SELECT 1 FROM services WHERE id = $1`,
-            [id]
+            // 2. Delete service (cascading deletes will handle related records)
+            const deleteService = db.prepare(`
+                DELETE FROM services WHERE id = ?
+            `);
+            deleteService.run(id);
+        });
+
+        transaction();
+        
+        return NextResponse.json(
+            { message: 'Service and all related data deleted successfully' },
+            { status: 200 }
         );
-        if (serviceExists.rows.length === 0) {
-            await client.query('ROLLBACK');
+    } catch (error) {
+        console.error('Error deleting service:', error);
+        
+        if (error instanceof Error && error.message === 'Service not found') {
             return NextResponse.json(
                 { error: 'Service not found' },
                 { status: 404 }
             );
         }
 
-        // 2. Delete in proper order to respect foreign keys
-        await client.query(
-            `DELETE FROM service_plan_features 
-             WHERE service_plan_id IN (
-                 SELECT id FROM service_plans WHERE service_id = $1
-             )`,
-            [id]
-        );
-
-        await client.query(
-            `DELETE FROM service_plan_features 
-             WHERE feature_id IN (
-                 SELECT id FROM features WHERE service_id = $1
-             )`,
-            [id]
-        );
-
-        await client.query(
-            `DELETE FROM service_plans WHERE service_id = $1`,
-            [id]
-        );
-
-        await client.query(
-            `DELETE FROM features WHERE service_id = $1`,
-            [id]
-        );
-
-        await client.query(
-            `DELETE FROM services WHERE id = $1`,
-            [id]
-        );
-
-        await client.query('COMMIT');
-        return NextResponse.json(
-            { message: 'Service and all related data deleted successfully' },
-            { status: 200 }
-        );
-    } catch (error) {
-        await client.query('ROLLBACK');
-        console.error('Error deleting service:', error);
         return NextResponse.json(
             { error: 'Failed to delete service' },
             { status: 500 }
         );
-    } finally {
-        client.release();
     }
 }

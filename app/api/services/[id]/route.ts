@@ -1,62 +1,75 @@
 import { NextResponse } from "next/server";
-import pool from "@/lib/pg";
+import db from "@/lib/db";
+
+export const dynamic = 'force-dynamic';
+
 // GET service plans by service id
 export async function GET(request: Request, { params }: { params: { id: string } }) {
     try {
-        const client = await pool.connect();
-        const { id } = await params;
-        const result = await client.query(`
-            WITH service_features AS (
-                SELECT 
-                    service_id,
-                    json_agg(json_build_object(
-                        'id', id,
-                        'name', feature_name,
-                        'created_at', created_at,
-                        'updated_at', updated_at
-                    )) as features
-                FROM features
-                GROUP BY service_id
-            ),
-            service_plans AS (
-                SELECT 
-                    sp.service_id,
-                    json_agg(json_build_object(
-                        'id', sp.id,
-                        'name', sp.plan_name,
-                        'description', sp.plan_description,
-                        'price', sp.plan_price,
-                        'features', (
-                            SELECT json_agg(f.feature_name)
-                            FROM service_plan_features spf
-                            JOIN features f ON f.id = spf.feature_id
-                            WHERE spf.service_plan_id = sp.id
-                            GROUP BY spf.service_plan_id
-                        ),
-                        'created_at', sp.created_at,
-                        'updated_at', sp.updated_at
-                    )) as plans
-                FROM service_plans sp
-                GROUP BY sp.service_id
-            )
-            SELECT 
-                s.*,
-                COALESCE(sf.features, '[]'::json) as features,
-                COALESCE(sp.plans, '[]'::json) as plans
-            FROM services s
-            LEFT JOIN service_features sf ON sf.service_id = s.id
-            LEFT JOIN service_plans sp ON sp.service_id = s.id
-            WHERE s.id = $1
-            ORDER BY s.created_at DESC
-        `, [id]);
+        const { id } = params;
 
-        client.release();
+        // Validate service ID
+        if (!id || isNaN(Number(id))) {
+            return NextResponse.json(
+                { error: 'Invalid service ID' },
+                { status: 400 }
+            );
+        }
 
-        return NextResponse.json(result.rows, { status: 200 });
+        // Get service
+        const service = db.prepare(`
+            SELECT * FROM services WHERE id = ?
+        `).get(id);
+
+        if (!service) {
+            return NextResponse.json(
+                { error: 'Service not found' },
+                { status: 404 }
+            );
+        }
+
+        // Get features for the service
+        const features = db.prepare(`
+            SELECT id, feature_name as name, created_at, updated_at
+            FROM features 
+            WHERE service_id = ?
+        `).all(id);
+
+        // Get plans for the service
+        const plans = db.prepare(`
+            SELECT id, plan_name as name, plan_description as description, 
+                   plan_price as price, created_at, updated_at
+            FROM service_plans 
+            WHERE service_id = ?
+        `).all(id);
+
+        // Get plan features for each plan
+        const getPlanFeatures = db.prepare(`
+            SELECT f.feature_name
+            FROM service_plan_features spf
+            JOIN features f ON f.id = spf.feature_id
+            WHERE spf.service_plan_id = ?
+        `);
+
+        const plansWithFeatures = plans.map((plan: any) => {
+            const planFeatures = getPlanFeatures.all(plan.id).map((f: any) => f.feature_name);
+            return {
+                ...plan,
+                features: planFeatures
+            };
+        });
+
+        const result = {
+            ...service,
+            features,
+            plans: plansWithFeatures
+        };
+
+        return NextResponse.json([result], { status: 200 });
     } catch (error) {
-        console.error('Error fetching services:', error);
+        console.error('Error fetching service:', error);
         return NextResponse.json(
-            { error: 'Failed to fetch services' },
+            { error: 'Failed to fetch service' },
             { status: 500 }
         );
     }
